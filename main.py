@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, jsonify
 from utils.fetch_weather_data import get_weather
 from pymongo import MongoClient
 from datetime import datetime
@@ -8,19 +8,20 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import io
+import requests
+import json
+
 
 from bson import ObjectId
-
+from flask_cors import CORS
 
 app = Flask(__name__)
 app.debug = True
+CORS(app)
 
 client = MongoClient("mongodb://localhost:27017")
 db = client['tenerife']
 weather_collection = db['weather']
-tasks_collection = db['tasks']
-
-
 
 def save_to_mongodb(x):
     current_weather = {
@@ -35,9 +36,12 @@ def save_to_mongodb(x):
     }
     
     weather_collection.insert_one(current_weather)
-
+    
+last_city=None
+    
 def job():
-    data = get_weather() # dane pogodowe {}
+    global last_city
+    data = get_weather(last_city)
     if data:
         save_to_mongodb(data)
         print("Dostarczono nowe dane")
@@ -46,14 +50,21 @@ def job():
 
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(job, 'interval', minutes=15)
+scheduler.add_job(job, 'interval', seconds=10)
 scheduler.start()
 
-@app.route("/")
-def homepage():
-    latest_data = weather_collection.find().sort([('_id',-1)]).limit(30)
-    
-    return render_template("index.html", weather_documents=list(latest_data))
+@app.route('/', methods=['GET', 'POST'])
+def weather():
+    global last_city
+
+    if request.method == 'POST':
+        last_city = request.form['city']
+        if last_city:
+            weather_data = get_weather(last_city)
+            return render_template('weather_search.html', city=city, weather_data=weather_data)
+        
+    return render_template('weather_search.html', city=last_city, weather_weather_data=None)
+
 
 @app.route("/chart")
 def generate_chart():
@@ -77,47 +88,3 @@ def generate_chart():
     
     # wyświetlenie wykresu na stronie
     return  png.getvalue(), 200, {"Content-Type":"image/png"}
-
-@app.route('/add-task', methods=["POST"])
-def add_task():
-
-    title = request.form.get("title")
-    desc = request.form.get("desc")
-    category = request.form.get("category")
-    urgency = request.form.get("urgency")
-    
-    new_task = {
-        "title" : title,
-        "desc" : desc,
-        "category" : category,
-        "urgency" : urgency
-    }
-    try:
-        tasks_collection.insert_one(new_task)
-    except Exception as e:
-        return "Błąd" + str(e)
-    
-    
-
-    return redirect(url_for("tasks"))
-
-@app.route("/delete-task/<id>", methods=["POST"])
-def delete_task(id):
-    try:
-        tasks_collection.delete_one({"_id":ObjectId(id)})
-    except Exception as e:
-        return "Błąd" + str(e)
-    
-    return redirect(url_for("tasks"))
-
-@app.route("/tasks")
-def tasks():
-    
-    tasks = list(tasks_collection.find())
-    
-    return render_template("tasks.html", tasks=tasks)
-
-
-
-
-
