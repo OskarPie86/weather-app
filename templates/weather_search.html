@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Wyszukiwarka pogody w miastach</title>
+  </head>
+  <body>
+    <h1>Wyszukiwarka pogody w miastach</h1>
+    <form method="POST">
+      <label for="city">Wpisz miasto:</label>
+      <input type="text" id="city" name="city" value="{{ city }}" required />
+      <button type="submit">Szukaj</button>
+    </form>
+    {% if weather_data %}
+    <h2>Pogoda w {{ weather_data.city }}</h2>
+    <p>Temperatura: {{ weather_data.temperature }}°C</p>
+    <p>Opis: {{ weather_data.description }}</p>
+    {% endif %}
+  </body>
+</html>
