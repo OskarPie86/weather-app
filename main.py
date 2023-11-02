@@ -10,6 +10,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 import io
 import requests
 import json
+import base64
 
 
 from bson import ObjectId
@@ -20,71 +21,92 @@ app.debug = True
 CORS(app)
 
 client = MongoClient("mongodb://localhost:27017")
-db = client['tenerife']
+db = client['City_weather']
 weather_collection = db['weather']
+
+scheduler = BackgroundScheduler()
+scheduler.start()
+
+last_city=None
 
 def save_to_mongodb(x):
     current_weather = {
-        "area" : x["name"],
-        "temp" : convert_C(x["main"]["temp"]),
-        "temp_min" : convert_C(x["main"]["temp_min"]),
-        "temp_max" : convert_C(x["main"]["temp_max"]),
-        "humidity" : x["main"]["humidity"],
-        "pressure" : x["main"]["pressure"],
+        "area" : x['city'],
+        "temp" : x["temperature"]["temp"],
+        "temp_min" : x["temperature"]["temp_min"],
+        "temp_max" : x["temperature"]["temp_max"],
+        "humidity" : x["temperature"]["humidity"],
+        "pressure" : x["temperature"]["pressure"],
         "timestamp" : datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "desc": f"{x['weather'][0]['main']}, {x['weather'][0]['description']}"
+        "desc": f"{x['description']}"
     }
     
     weather_collection.insert_one(current_weather)
     
-last_city=None
-    
 def job():
     global last_city
-    data = get_weather(last_city)
-    if data:
-        save_to_mongodb(data)
-        print("Dostarczono nowe dane")
-    else:
-        print("Nie udało się pobrać danych")
+    if last_city:
+        data = get_weather(last_city)
+        if data:
+            print(data)  # Dodaj ten print, aby zobaczyć, co jest zawarte w 'data'
+            save_to_mongodb(data)
+            print("Dostarczono nowe dane")
+        else:
+            print("Nie udało się pobrać danych")
 
-
-scheduler = BackgroundScheduler()
 scheduler.add_job(job, 'interval', seconds=10)
-scheduler.start()
 
 @app.route('/', methods=['GET', 'POST'])
-def weather():
+def index():
     global last_city
+    latest_data = []
 
     if request.method == 'POST':
-        last_city = request.form['city']
+        last_city = request.form.get('city')
         if last_city:
-            weather_data = get_weather(last_city)
-            return render_template('weather_search.html', city=city, weather_data=weather_data)
-        
-    return render_template('weather_search.html', city=last_city, weather_weather_data=None)
+
+            latest_data = weather_collection.find().sort([('_id',-1)]).limit(30)
+    return render_template("index.html", weather_data=list(latest_data))
 
 
-@app.route("/chart")
-def generate_chart():
-    chart_data = weather_collection.find({},{'_id':0, 'temp':1,'timestamp':1}).sort([('_id',-1)]).limit(10)
+@app.route('/base')
+def base():
+    city = request.args.get('city')
+    weather_data = weather_collection.find_one({"_id": city})
+    return render_template('base.html', city=city, weather_data=weather_data)
+
+@app.route('/weather_search', methods=['POST'])
+def weather():
+    global last_city
+    last_city = request.form.get('city')
+    return render_template('index.html', city=last_city)
+
+@app.route('/chart')
+def chart():
+    chart_data = weather_collection.find({}, {'_id': 0, 'temp': 1, 'timestamp': 1}).sort([('_id', -1)]).limit(10)
     data = list(chart_data)
-    timestamps =[datetime.strptime(entry['timestamp'], "%Y-%m-%d %H:%M:%S").hour for entry in data]
+    timestamps = [entry['timestamp'] for entry in data]
     temperatures = [entry['temp'] for entry in data]
-    print(timestamps)
-    print(temperatures)
-    
-    fig = Figure()
-    axis = fig.add_subplot(1,1,1)
-    axis.bar(timestamps, temperatures)
-    axis.set_xlabel("Time")
-    axis.set_ylabel("Temperature")
-    axis.set_title("Tenerife weather")
+
+    fig = Figure(figsize=(12,10)) 
+    axis = fig.add_subplot(1, 1, 1)
+    axis.plot(timestamps, temperatures)
+    axis.set_xlabel("Timestamp")
+    axis.set_ylabel("Temperatures (°C)")
+    axis.set_title("Temperatures Chart")
+    num_labels = 5  # Liczba etykiet, które chcesz wyświetlić
+    step = len(timestamps) // num_labels
+    axis.set_xticks(range(0, len(timestamps), step))
+    axis.set_xticklabels(timestamps[::step], rotation=45)
+    for label in axis.get_xticklabels():
+        label.set_size(6)
     
     canvas = FigureCanvasAgg(fig)
     png = io.BytesIO()
     canvas.print_png(png)
+    plot_url = "data:image/png;base64," + base64.b64encode(png.getvalue()).decode('utf-8')
     
-    # wyświetlenie wykresu na stronie
-    return  png.getvalue(), 200, {"Content-Type":"image/png"}
+    return render_template('chart.html', plot_url=plot_url, city=last_city)
+
+
+
