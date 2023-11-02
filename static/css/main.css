@@ -17,3 +17,8 @@ body {
   bottom: 20px;
   right: 20px;
 }
+.chart-container {
+  max-width: 1600px; /* Dostosuj szerokość kontenera do swoich potrzeb */
+  height: 500px;
+  margin: 0 auto; /* Wyśrodkuj kontener na stronie */
+}
